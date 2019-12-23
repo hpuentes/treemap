@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<!-- Body tag is where we will append our SVG and SVG objects-->
+<body>
+  <svg id="svg"></svg>
+</body>
+
+<!-- Load in the d3 library -->
+<script src="/treemap/d3/d3.min.js" type="text/javascript"></script>
+
+<script>
+  let anho = "2016";
+  let tipo = "Pagos por gastos de inversión";
+  //Create the total victims variable for each age range.
+  let createTree = (data,year) => {
+    let dataAhnosFilter = d3.entries(data).filter((value) => {
+        if(value.value.year == year){
+          return true;
+        }
+        return false;
+    }).map(d => {
+      return {
+        code: d.value.code,
+        parent: d.value.parent,
+        name: d.value.name,
+        year: d.value.year,
+        value: d.value.value,
+      }
+    });
+
+    var dataMap = dataAhnosFilter.reduce((map, node) => {
+      map[node.code] = node;
+      return map;
+    }, {});
+
+    var treeData = [];
+    dataAhnosFilter.forEach((node) => {
+      var parent = dataMap[node.parent];
+      if (parent) {
+        (parent.children || (parent.children = [])).push(node);
+      } else {
+        treeData.push(node);
+      }
+    });
+    dataAhnosFilter.forEach((node) => {
+      if(node.children)
+        delete node['value'];
+    });
+    return treeData;
+  }
+
+  let dataGastosInversion;
+  let dataGastosFuncionamiento;
+  let dataIngresos;
+  async function loadData(){
+    dataGastosInversion = (await d3.csv("https://raw.githubusercontent.com/hpuentes/gastos_ingresos_bogota_2016_2017/master/FUT_GASTOS_INVERSION_BOGOTA.csv", ({CODIGO, PADRE, AÑO, NOMBRE, PAGOS}) => {
+      if(AÑO == '2016')
+        return {code:CODIGO, parent: PADRE,year:AÑO,name:NOMBRE,value:(+PAGOS)*1000};
+      else
+        return {code:CODIGO, parent: PADRE,year:AÑO,name:NOMBRE,value:(+PAGOS)};
+    }));
+    dataGastosFuncionamiento = (await d3.csv("https://raw.githubusercontent.com/hpuentes/gastos_ingresos_bogota_2016_2017/master/FUT_GASTOS_FUNCIONAMIENTO_BOGOTA.csv", ({CODIGO, PADRE, AÑO, NOMBRE, PAGOS}) => {
+      if(AÑO == '2016')
+        return {code:CODIGO, parent: PADRE,year:AÑO,name:NOMBRE,value:(+PAGOS)*1000};
+      else
+        return {code:CODIGO, parent: PADRE,year:AÑO,name:NOMBRE,value:+PAGOS};
+    }));
+    dataIngresos = (await d3.csv("https://raw.githubusercontent.com/hpuentes/gastos_ingresos_bogota_2016_2017/master/FUT_INGRESOS_BOGOTA.csv", ({CODIGO, PADRE, AÑO, NOMBRE, INGRESOS}) => {
+      if(AÑO == '2016')
+        return {code:CODIGO, parent: PADRE,year:AÑO,name:NOMBRE,value:(+INGRESOS)*1000};
+      else
+        return {code:CODIGO, parent: PADRE,year:AÑO,name:NOMBRE,value:+INGRESOS};
+    }));
+    load();
+  }
+  loadData();
+
+  function load(){
+    let data;
+    if(tipo == "Pagos por gastos de inversión"){
+      data = createTree(dataGastosInversion,anho)[0]
+    }
+    else if(tipo == "Ingreso efectivo"){
+      data = createTree(dataIngresos,anho)[0]
+    }
+    else{
+      if(anho == "2017"){
+        //data = createTree(dataGastosFuncionamiento,anho)[6]//PROBLEMAS DE CALIDAD DE DATOS
+        data = {name:"NO DISPONIBLE POR PROBLEMAS DE CALIDAD DE DATOS"};
+      }
+      else
+        data = createTree(dataGastosFuncionamiento,anho)[0]
+    }
+
+    let format = d3.format(",d")
+
+    let color = d3.scaleSequential([0, 9], d3.interpolateOranges)
+
+    let width = 975
+    let height = 1060
+
+    let treemap = data => d3.treemap()
+      .size([width, height])
+      .paddingOuter(3)
+      .paddingTop(19)
+      .paddingInner(1)
+      .round(true)
+    (d3.hierarchy(data)
+      .sum(d => d.value)
+      .sort((a, b) => b.value - a.value))
+
+    const root = treemap(data);
+
+    const svg = d3.select("#svg")
+        .attr("viewBox", [0, 0, width, height])
+        .style("font", "10px sans-serif");
+
+    const shadow = {id: "O-shadow-552", href: "http://localhost:8080/treemap#O-shadow-552"};
+
+    svg.append("filter")
+        .attr("id", shadow.id)
+      .append("feDropShadow")
+        .attr("flood-opacity", 0.3)
+        .attr("dx", 0)
+        .attr("stdDeviation", 3);
+
+    const node = svg.selectAll("g")
+      .data(d3.nest().key(d => d.height).entries(root.descendants()))
+      .join("g")
+        .attr("filter", shadow)
+      .selectAll("g")
+      .data(d => d.values)
+      .join("g")
+        .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+    node.append("title")
+        .text(d => `${d.ancestors().reverse().map(d => d.data.name).join("/")}\n${format(d.value)}`);
+
+    var customIDCntr = 0;
+
+    function getNextID(customIDprefix) {
+      var id = customIDprefix + customIDCntr++;
+      return {id : id, href: "http://localhost:8080/treemap#"+id};
+    }
+
+    node.append("rect")
+        .attr("id", d => (d.nodeUid = getNextID("node")).id)
+        .attr("fill", d => color(d.depth))
+        .attr("width", d => d.x1 - d.x0)
+        .attr("height", d => d.y1 - d.y0);
+
+    node.append("clipPath")
+        .attr("id", d => (d.clipUid = getNextID("clip")).id)
+      .append("use")
+        .attr("xlink:href", d => d.nodeUid.href);
+
+    node.append("text")
+        .attr("clip-path", d => d.clipUid)
+      .selectAll("tspan")
+      .data(d => {
+        if(d.x1 - d.x0 < 100)
+          return ""; 
+        return d.data.name.match(/\b[\w']+(?:[^\w\n]+[\w']+){0,2}\b/g).concat(format(d.value));})
+      .join("tspan")
+        .attr("fill-opacity", (d, i, nodes) => i === nodes.length - 1 ? 0.7 : null)
+        .text(d => d);
+
+    node.filter(d => d.children).selectAll("tspan")
+        .attr("dx", 3)
+        .attr("y", 13);
+
+    node.filter(d => !d.children).selectAll("tspan")
+        .attr("x", 3)
+        .attr("y", (d, i, nodes) => `${(i === nodes.length - 1) * 0.3 + 1.1 + i * 0.9}em`);
+  }
+
+</script>
